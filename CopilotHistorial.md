@@ -24,3 +24,16 @@
 **Tags:** tag1,tag2
 
 ---
+
+## Entrada — 20260319_201911  (ID: 20260319_201911_escribe_o_pega_aqui_la_pregunta_multi_li)
+**Pregunta:**  
+> > Escribe o pega aquí la pregunta (multi-línea).
+
+**Respuesta:**  
+> > Escribe o pega aquí la respuesta (multi-línea).
+
+**Contexto / Notas:**  
+
+**Tags:** tag1,tag2
+
+---
