@@ -17,6 +17,7 @@ Uso:
 Opciones:
   -j    -> crear entries/<ID>.json
   -d DIR -> cambiar base dir
+  -P     -> no hacer git push automático
 EOF
   exit 1
 }
@@ -24,8 +25,9 @@ EOF
 EDITOR="${VISUAL:-${EDITOR:-vi}}"
 MAKE_JSON=false
 USE_EDITOR=false
+NO_GIT_PUSH=false
 
-while getopts ":q:a:t:Q:A:ejd:" opt; do
+while getopts ":q:a:t:Q:A:ejd:P" opt; do
   case $opt in
     q) Q="$OPTARG" ;;
     a) A="$OPTARG" ;;
@@ -35,6 +37,7 @@ while getopts ":q:a:t:Q:A:ejd:" opt; do
     e) USE_EDITOR=true ;;
     j) MAKE_JSON=true ;;
     d) BASE_DIR="$OPTARG"; MD_FILE="$BASE_DIR/CopilotHistorial.md"; JSON_DIR="$BASE_DIR/entries" ;;
+    P) NO_GIT_PUSH=true ;;
     *) usage ;;
   esac
 done
@@ -102,11 +105,37 @@ if [ -f "$MD_FILE" ]; then
     total=${#_bfiles[@]}
     move_count=$(( total - BACKUP_KEEP ))
     if [ "$move_count" -gt 0 ]; then
+      # archive oldest files into per-month directories, then create/augment month tarballs
+      declare -A months_seen
       for ((i=0;i<move_count;i++)); do
         src="${_bfiles[i]}"
+        if [ ! -f "$src" ]; then
+          continue
+        fi
+        month=$(date -r "$src" +%Y-%m)
+        months_seen["$month"]=1
+        mkdir -p "$BACKUP_ARCHIVE_DIR/$month"
         bname="$(basename "$src")"
-        gzip -c "$src" > "$BACKUP_ARCHIVE_DIR/${bname}.gz" || true
+        gzip -c "$src" > "$BACKUP_ARCHIVE_DIR/$month/${bname}.gz" || true
         rm -f "$src" || true
+      done
+
+      # for each month, merge into a single tar.gz (preserve prior contents)
+      for month in "${!months_seen[@]}"; do
+        month_dir="$BACKUP_ARCHIVE_DIR/$month"
+        tarball="$BACKUP_ARCHIVE_DIR/${month}.tar.gz"
+        tmpdir="$(mktemp -d)"
+        # if tarball exists, extract it first to tmpdir to preserve prior entries
+        if [ -f "$tarball" ]; then
+          tar -xzf "$tarball" -C "$tmpdir" 2>/dev/null || true
+        fi
+        # copy current month files into tmpdir
+        cp -a "$month_dir/"* "$tmpdir/" 2>/dev/null || true
+        # recreate tarball from tmpdir
+        tar -czf "$tarball" -C "$tmpdir" . || true
+        rm -rf "$tmpdir"
+        # remove the month dir after bundling
+        rm -rf "$month_dir"
       done
     fi
   fi
@@ -119,6 +148,16 @@ if [ -f "$MD_FILE" ]; then
     git -C "$BASE_DIR" commit -m "Ignore local backup archive" >/dev/null 2>&1 || true
   fi
 fi
+
+# compress remaining backups in BACKUP_DIR (those to be kept in the repo)
+for f in "$BACKUP_DIR"/CopilotHistorial.md.*; do
+  [ -e "$f" ] || continue
+  # skip if it's already a tar.gz or inside old_local
+  case "$f" in
+    *old_local/*|*.tar.gz|*.gz) continue ;;
+  esac
+  gzip -c "$f" > "$f.gz" && rm -f "$f" || true
+done
 
 # Remove any leading '>' from lines of Q before adding blockquote
 Q_CLEAN="$(printf "%s\n" "$Q" | sed 's/^[[:space:]]*>[[:space:]]*//')"
@@ -167,7 +206,9 @@ if git -C "$BASE_DIR" rev-parse --is-inside-work-tree > /dev/null 2>&1; then
     git -C "$BASE_DIR" add "$BACKUP_DIR/CopilotHistorial.md.$TIMESTAMP" >/dev/null 2>&1 || true
   fi
   git -C "$BASE_DIR" commit -m "Q&A: $ID" || true
-  git -C "$BASE_DIR" push || true
+  if [ "$NO_GIT_PUSH" = false ]; then
+    git -C "$BASE_DIR" push || true
+  fi
 fi
 
 echo "Entrada añadida: $MD_FILE (ID: $ID)"
